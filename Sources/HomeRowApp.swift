@@ -78,7 +78,7 @@ struct MenuBarView: View {
 
             if !engine.hasAccessibility {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("HomeRow needs Accessibility permission. Your top-row buttons stay 100% normal.")
+                    Text("HomeRow needs Device Control permission (Accessibility). Your top-row buttons stay 100% normal.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack {

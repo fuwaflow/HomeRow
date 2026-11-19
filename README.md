@@ -21,4 +21,4 @@ chmod +x build.sh
 open HomeRow.app
 ```
 
-Grant **Accessibility** permission when prompted in **System Settings → Privacy & Security → Accessibility**.
+Grant permission when prompted in **System Settings → Privacy & Security → Device Control and Data Access** (or **Accessibility** on older macOS).
