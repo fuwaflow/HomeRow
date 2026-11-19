@@ -1,29 +1,5 @@
 import SwiftUI
 
-final class SetupWindowController {
-    static let shared = SetupWindowController()
-    private var window: NSWindow?
-
-    func show(engine: HomeRowEngine) {
-        if let win = window {
-            win.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        let hosting = NSHostingController(rootView: SetupView(engine: engine))
-        let win = NSWindow(contentViewController: hosting)
-        win.title = "HomeRow"
-        win.setContentSize(NSSize(width: 720, height: 520))
-        win.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
-        win.toolbarStyle = .unified
-        win.center()
-        win.isReleasedWhenClosed = false
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        window = win
-    }
-}
-
 enum SetupPage: String, CaseIterable, Identifiable {
     case autoTune = "Quick Setup"
     case keys = "Home-Row Keys"
@@ -51,11 +27,17 @@ struct HomeRowApp: App {
             Image(systemName: engine.isEnabled && engine.hasAccessibility ? "keyboard.fill" : "keyboard")
         }
         .menuBarExtraStyle(.window)
+
+        Window("HomeRow", id: "settings") {
+            SetupView(engine: engine)
+        }
+        .windowResizability(.contentSize)
     }
 }
 
 struct MenuBarView: View {
     @ObservedObject var engine: HomeRowEngine
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -77,22 +59,22 @@ struct MenuBarView: View {
             }
 
             if !engine.hasAccessibility {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("HomeRow needs Device Control permission (Accessibility). Your top-row buttons stay 100% normal.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    HStack {
-                        Button("Grant Permission") {
-                            engine.checkAccessibility(prompt: true)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        Button("Refresh") {
-                            engine.checkAccessibility(prompt: false)
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("HomeRow needs Device Control permission (Accessibility). Your top-row buttons stay 100% normal.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Button("Grant Permission") {
+                                engine.checkAccessibility(prompt: true)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button("Refresh") {
+                                engine.checkAccessibility(prompt: false)
+                            }
                         }
                     }
                 }
-                .padding(10)
-                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             }
 
             Divider()
@@ -102,7 +84,8 @@ struct MenuBarView: View {
             Toggle("Swap Cmd+Tab & Ctrl+Tab", isOn: $engine.swapCmdCtrlTab)
 
             Button {
-                SetupWindowController.shared.show(engine: engine)
+                openWindow(id: "settings")
+                NSApp.activate(ignoringOtherApps: true)
             } label: {
                 Label("Open HomeRow Settings…", systemImage: "gearshape")
                     .frame(maxWidth: .infinity)
@@ -121,8 +104,7 @@ struct MenuBarView: View {
             }
         }
         .padding(16)
-        .frame(width: 300)
-        .controlSize(.large)
+        .frame(width: 290)
         .onAppear {
             engine.checkAccessibility(prompt: false)
         }
@@ -163,7 +145,6 @@ struct SetupView: View {
             }
         }
         .frame(width: 720, height: 520)
-        .controlSize(.large)
     }
 }
 
@@ -173,35 +154,35 @@ struct AutoTuneTab: View {
     var body: some View {
         Form {
             Section {
-                HStack(spacing: 14) {
-                    Image(systemName: "hand.wave.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(Color.accentColor)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Welcome to HomeRow")
-                            .font(.headline)
-                        Text("Type normally for a few seconds and HomeRow will find the most comfortable timing for your hands.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                LabeledContent {
+                    EmptyView()
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Welcome to HomeRow")
+                                .font(.headline)
+                            Text("Type normally for a few seconds and HomeRow will find the most comfortable timing for your hands.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "hand.wave.fill")
+                            .font(.title)
+                            .foregroundStyle(Color.accentColor)
                     }
                 }
-                .padding(.vertical, 4)
             }
 
             Section("Quick Typing Test") {
                 if !engine.isCalibrating {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Automatic Setup")
-                            Text("Current feel: \(feelSummary)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
+                    LabeledContent {
                         Button("Start Test") {
                             engine.startCalibration()
                         }
                         .buttonStyle(.borderedProminent)
+                    } label: {
+                        Text("Automatic Setup")
+                        Text("Current feel: \(feelSummary)")
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
@@ -210,9 +191,7 @@ struct AutoTuneTab: View {
                             .foregroundStyle(.secondary)
                         Text("the quick brown fox jumps over the lazy dog")
                             .font(.body.monospaced())
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                            .textSelection(.enabled)
 
                         TextField("Click here and type…", text: $engine.calibrationInput)
                             .textFieldStyle(.roundedBorder)
@@ -294,64 +273,52 @@ struct KeysTab: View {
     var body: some View {
         Form {
             Section {
-                VStack(spacing: 14) {
-                    HStack {
-                        Text("Your Home Row")
-                            .font(.headline)
-                        Spacer()
-                        Picker("", selection: $displayColemak) {
-                            Text("QWERTY").tag(false)
-                            Text("Colemak-DH").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 190)
+                LabeledContent("Keyboard Labels") {
+                    Picker("", selection: $displayColemak) {
+                        Text("QWERTY").tag(false)
+                        Text("Colemak-DH").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 200)
+                }
+
+                HStack(spacing: 6) {
+                    Spacer()
+                    ForEach(leftSlots, id: \.code) { item in
+                        NativeKeycapMenu(
+                            letter: displayColemak ? item.colemak : item.qwerty,
+                            mod: engine.keyMods[item.code] ?? .none,
+                            onSelect: { engine.keyMods[item.code] = $0 }
+                        )
                     }
 
-                    // Visual keyboard row
-                    HStack(spacing: 6) {
-                        ForEach(leftSlots, id: \.code) { item in
-                            KeycapButton(
-                                letter: displayColemak ? item.colemak : item.qwerty,
-                                mod: engine.keyMods[item.code] ?? .none,
-                                hasBump: item.code == 3,
-                                onSelect: { engine.keyMods[item.code] = $0 }
-                            )
-                        }
+                    NativeStaticKeycap(letter: "G")
+                    NativeStaticKeycap(letter: displayColemak ? "M" : "H")
 
-                        // Center G / M spacer keys
-                        StaticKeycap(letter: "G")
-                        StaticKeycap(letter: displayColemak ? "M" : "H")
-
-                        ForEach(rightSlots, id: \.code) { item in
-                            KeycapButton(
-                                letter: displayColemak ? item.colemak : item.qwerty,
-                                mod: engine.keyMods[item.code] ?? .none,
-                                hasBump: item.code == 38,
-                                onSelect: { engine.keyMods[item.code] = $0 }
-                            )
-                        }
+                    ForEach(rightSlots, id: \.code) { item in
+                        NativeKeycapMenu(
+                            letter: displayColemak ? item.colemak : item.qwerty,
+                            mod: engine.keyMods[item.code] ?? .none,
+                            onSelect: { engine.keyMods[item.code] = $0 }
+                        )
                     }
-                    .padding(.vertical, 6)
-
-                    Text("Click any highlighted key to change what it does when held.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Spacer()
                 }
                 .padding(.vertical, 6)
+            } header: {
+                Text("Your Home Row")
+            } footer: {
+                Text("Click any key above to choose what happens when you hold it. Tapping always types the letter.")
             }
 
             Section("About Home-Row Keys") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Tap vs. Hold")
-                        .font(.subheadline.bold())
-                    Text("Tapping any of these keys types the letter as usual. Holding one down turns it into a Mac shortcut key.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("How it works: Left-hand keys modify right-hand keys, and right-hand keys modify left-hand keys (when Safer Two-Hand Shortcuts is on).")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                LabeledContent("Tap vs. Hold") {
+                    EmptyView()
                 }
-                .padding(.vertical, 2)
+                Text("Tapping any of these keys types the letter as usual. Holding one down turns it into a Mac shortcut key.\nHow it works: Left-hand keys modify right-hand keys, and right-hand keys modify left-hand keys (when Safer Two-Hand Shortcuts is on).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -359,10 +326,9 @@ struct KeysTab: View {
     }
 }
 
-struct KeycapButton: View {
+struct NativeKeycapMenu: View {
     let letter: String
     let mod: ModChoice
-    let hasBump: Bool
     let onSelect: (ModChoice) -> Void
 
     var body: some View {
@@ -379,62 +345,38 @@ struct KeycapButton: View {
                 }
             }
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 Text(letter)
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .font(.headline)
                 Text(shortSymbol)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.caption2)
                     .foregroundStyle(mod == .none ? Color.secondary : Color.accentColor)
-                if hasBump {
-                    Capsule()
-                        .fill(Color.secondary.opacity(0.45))
-                        .frame(width: 12, height: 2.5)
-                }
             }
-            .frame(width: 48, height: 62)
-            .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(mod == .none ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(Color.accentColor.opacity(0.14)))
-                    .shadow(color: Color.black.opacity(0.08), radius: 2, y: 1)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .stroke(mod == .none ? Color.primary.opacity(0.12) : Color.accentColor.opacity(0.55), lineWidth: 1.2)
-            )
+            .frame(width: 44, height: 48)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .buttonStyle(.bordered)
+        .tint(mod == .none ? nil : .accentColor)
     }
 
     private var shortSymbol: String {
         switch mod {
         case .none: return "Off"
-        case .control: return "⌃ Ctrl"
-        case .option: return "⌥ Opt"
-        case .command: return "⌘ Cmd"
-        case .shift: return "⇧ Shft"
+        case .control: return "⌃"
+        case .option: return "⌥"
+        case .command: return "⌘"
+        case .shift: return "⇧"
         }
     }
 }
 
-struct StaticKeycap: View {
+struct NativeStaticKeycap: View {
     let letter: String
 
     var body: some View {
-        VStack {
-            Text(letter)
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(.tertiary)
-        }
-        .frame(width: 36, height: 62)
-        .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        Button(letter) {}
+            .buttonStyle(.bordered)
+            .disabled(true)
+            .frame(width: 34, height: 48)
     }
 }
 
@@ -497,17 +439,8 @@ struct SettingToggleRow: View {
 
     var body: some View {
         Toggle(isOn: $isOn) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.body)
-                Text(whatItDoes)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("How it works: \(howItWorks)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.vertical, 2)
+            Text(title)
+            Text("\(whatItDoes) How it works: \(howItWorks)")
         }
     }
 }
@@ -521,20 +454,15 @@ struct SettingSliderRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title)
-                Spacer()
+            LabeledContent(title) {
                 Text("\(Int(value)) ms")
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
             Slider(value: $value, in: range, step: 5)
-            Text(whatItDoes)
+            Text("\(whatItDoes)\nHow it works: \(howItWorks)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("How it works: \(howItWorks)")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 2)
     }
