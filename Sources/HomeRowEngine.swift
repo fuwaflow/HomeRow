@@ -127,7 +127,7 @@ final class HomeRowEngine: ObservableObject {
         let flag: CGEventFlags
         let isLeft: Bool
         var promotedToMod: Bool = false
-        var timer: DispatchWorkItem?
+        var bufferedDowns: [(keyCode: CGKeyCode, flags: CGEventFlags)] = []
     }
 
     private var pending: [CGKeyCode: PendingKey] = [:]
@@ -355,6 +355,42 @@ final class HomeRowEngine: ObservableObject {
         let priorIdleSec = priorIdleMs / 1000.0
         let quickTapSec = quickTapMs / 1000.0
 
+        func flushPendingAsTap(_ pKey: CGKeyCode, now: CFAbsoluteTime) {
+            guard let p = pending.removeValue(forKey: pKey) else { return }
+            lastTapReleaseTime[pKey] = now
+            lastNonModKeyTime = now
+            emitKey(pKey, down: true, flags: activeMods)
+            emitKey(pKey, down: false, flags: activeMods)
+            for buf in p.bufferedDowns {
+                lastNonModKeyTime = now
+                emitKey(buf.keyCode, down: true, flags: buf.flags.union(activeMods))
+            }
+        }
+
+        func promotePendingToMod(_ pKey: CGKeyCode) {
+            guard var p = pending[pKey], !p.promotedToMod else { return }
+            p.promotedToMod = true
+            let bufs = p.bufferedDowns
+            p.bufferedDowns.removeAll()
+            pending[pKey] = p
+            activeMods.insert(p.flag)
+            for buf in bufs {
+                emitKey(buf.keyCode, down: true, flags: buf.flags.union(activeMods))
+            }
+        }
+
+        // On keyUp of a non-pending key: if it was buffered behind a still-held home-row key,
+        // that means the inner key was released first -> balanced hold-trigger-on-release promotes the home-row key!
+        if type == .keyUp && pending[keyCode] == nil {
+            for (pKey, pVal) in pending where !pVal.promotedToMod {
+                if pVal.bufferedDowns.contains(where: { $0.keyCode == keyCode }) {
+                    promotePendingToMod(pKey)
+                }
+            }
+            event.flags = event.flags.union(activeMods)
+            return Unmanaged.passUnretained(event)
+        }
+
         if let slot = Self.slots.first(where: { $0.keyCode == keyCode }),
            let modFlag = keyMods[keyCode]?.flag {
             if type == .keyDown {
@@ -364,28 +400,27 @@ final class HomeRowEngine: ObservableObject {
                     return Unmanaged.passUnretained(event)
                 }
 
-                // Resolve any already-pending home-row keys first (e.g. rolling J -> K on the same hand, or E -> A opposite hand)
-                var triggeredOppositeMod = false
-                for (pKey, var pVal) in pending where pKey != keyCode {
+                // Resolve or buffer against any already-pending home-row keys
+                var wasBuffered = false
+                for (pKey, var pVal) in pending where pKey != keyCode && !pVal.promotedToMod {
                     let opposite = pVal.isLeft ? rightHandKeys.contains(keyCode) : leftHandKeys.contains(keyCode)
                     if opposite || !oppositeHandOnly {
-                        pVal.timer?.cancel()
-                        pVal.promotedToMod = true
-                        pending[pKey] = pVal
-                        activeMods.insert(pVal.flag)
-                        triggeredOppositeMod = true
-                    } else if !pVal.promotedToMod {
-                        pVal.timer?.cancel()
-                        pending.removeValue(forKey: pKey)
-                        let f = event.flags.union(activeMods)
-                        emitKey(pKey, down: true, flags: f)
-                        emitKey(pKey, down: false, flags: f)
+                        if now - pVal.downTime >= tappingSec {
+                            promotePendingToMod(pKey)
+                        } else {
+                            pVal.bufferedDowns.append((keyCode: keyCode, flags: event.flags))
+                            pending[pKey] = pVal
+                            wasBuffered = true
+                        }
+                    } else {
+                        flushPendingAsTap(pKey, now: now)
                     }
                 }
+                if wasBuffered { return nil }
 
-                // If an opposite-hand modifier is already active (e.g. holding E/Cmd and pressing A),
-                // emit the modified key immediately on keyDown instead of putting it into pending.
-                if triggeredOppositeMod || !activeMods.isEmpty {
+                // If a modifier is already active (e.g. holding E/Cmd and pressing A),
+                // emit immediately on keyDown.
+                if !activeMods.isEmpty {
                     event.flags = event.flags.union(activeMods)
                     return Unmanaged.passUnretained(event)
                 }
@@ -398,30 +433,15 @@ final class HomeRowEngine: ObservableObject {
                     return Unmanaged.passUnretained(event)
                 }
 
-                var item = PendingKey(keyCode: keyCode, downTime: now, flag: modFlag, isLeft: slot.isLeft)
-                if !oppositeHandOnly {
-                    let work = DispatchWorkItem { [weak self] in
-                        guard let self = self, var cur = self.pending[keyCode], !cur.promotedToMod else { return }
-                        cur.promotedToMod = true
-                        self.pending[keyCode] = cur
-                        self.activeMods.insert(cur.flag)
-                    }
-                    item.timer = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + tappingSec, execute: work)
-                }
-                pending[keyCode] = item
+                pending[keyCode] = PendingKey(keyCode: keyCode, downTime: now, flag: modFlag, isLeft: slot.isLeft)
                 return nil
             } else {
-                if let p = pending.removeValue(forKey: keyCode) {
-                    p.timer?.cancel()
+                if let p = pending[keyCode] {
                     if p.promotedToMod {
+                        pending.removeValue(forKey: keyCode)
                         activeMods.remove(p.flag)
                     } else {
-                        lastTapReleaseTime[keyCode] = now
-                        lastNonModKeyTime = now
-                        let f = event.flags.union(activeMods)
-                        emitKey(keyCode, down: true, flags: f)
-                        emitKey(keyCode, down: false, flags: f)
+                        flushPendingAsTap(keyCode, now: now)
                     }
                     return nil
                 }
@@ -432,21 +452,22 @@ final class HomeRowEngine: ObservableObject {
 
         if type == .keyDown && !isRepeat {
             lastNonModKeyTime = now
-            for (pKey, var pVal) in pending {
+            var wasBuffered = false
+            for (pKey, var pVal) in pending where !pVal.promotedToMod {
                 let opposite = pVal.isLeft ? rightHandKeys.contains(keyCode) : leftHandKeys.contains(keyCode)
                 if opposite || !oppositeHandOnly {
-                    pVal.timer?.cancel()
-                    pVal.promotedToMod = true
-                    pending[pKey] = pVal
-                    activeMods.insert(pVal.flag)
-                } else if !pVal.promotedToMod {
-                    pVal.timer?.cancel()
-                    pending.removeValue(forKey: pKey)
-                    let f = event.flags.union(activeMods)
-                    emitKey(pKey, down: true, flags: f)
-                    emitKey(pKey, down: false, flags: f)
+                    if now - pVal.downTime >= tappingSec {
+                        promotePendingToMod(pKey)
+                    } else {
+                        pVal.bufferedDowns.append((keyCode: keyCode, flags: event.flags))
+                        pending[pKey] = pVal
+                        wasBuffered = true
+                    }
+                } else {
+                    flushPendingAsTap(pKey, now: now)
                 }
             }
+            if wasBuffered { return nil }
         }
 
         if !activeMods.isEmpty {
