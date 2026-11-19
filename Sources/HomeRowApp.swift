@@ -30,6 +30,7 @@ struct HomeRowApp: App {
             MenuBarView(engine: engine)
         } label: {
             Image(systemName: engine.isEnabled && engine.hasAccessibility ? "keyboard.fill" : "keyboard")
+                .accessibilityLabel("HomeRow — \(engine.isEnabled && engine.hasAccessibility ? "Active" : "Paused")")
         }
         .menuBarExtraStyle(.window)
 
@@ -69,15 +70,14 @@ struct MenuBarView: View {
                         Text("HomeRow needs Device Control permission (Accessibility). Your top-row buttons stay 100% normal.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        HStack {
+                        HStack(spacing: 10) {
                             Button("Grant Permission") {
                                 engine.checkAccessibility(prompt: true)
                             }
-                            .buttonStyle(.glassProminent)
-                            Button("Refresh") {
-                                engine.checkAccessibility(prompt: false)
-                            }
-                            .buttonStyle(.glass)
+                            .buttonStyle(.borderedProminent)
+                            Text("Checking automatically…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -91,12 +91,13 @@ struct MenuBarView: View {
 
             Button {
                 openWindow(id: "settings")
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
             } label: {
                 Label("Open HomeRow Settings…", systemImage: "gearshape")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(",", modifiers: .command)
 
             Divider()
 
@@ -167,9 +168,9 @@ struct AutoTuneTab: View {
                         .font(.title2)
                         .foregroundStyle(Color.accentColor)
                         .frame(width: 44, height: 44)
-                        .glassEffect(
-                            .regular.tint(.accentColor.opacity(0.22)),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.14))
                         )
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Welcome to HomeRow")
@@ -188,7 +189,7 @@ struct AutoTuneTab: View {
                         Button("Start Test") {
                             engine.startCalibration()
                         }
-                        .buttonStyle(.glassProminent)
+                        .buttonStyle(.borderedProminent)
                     } label: {
                         Text("Automatic Setup")
                         Text("Current feel: \(feelSummary)")
@@ -219,11 +220,11 @@ struct AutoTuneTab: View {
                             Button("Cancel") {
                                 engine.finishCalibration(apply: false)
                             }
-                            .buttonStyle(.glass)
+                            .buttonStyle(.bordered)
                             Button("Save") {
                                 engine.finishCalibration(apply: true)
                             }
-                            .buttonStyle(.glassProminent)
+                            .buttonStyle(.borderedProminent)
                             .disabled(engine.recommendedTapMs == nil)
                         }
                     }
@@ -256,6 +257,20 @@ struct AutoTuneTab: View {
                     howItWorks: "Press Ctrl+Tab to switch apps on macOS, and Cmd+Tab to switch tabs inside an app.",
                     isOn: $engine.swapCmdCtrlTab
                 )
+                SettingToggleRow(
+                    title: "Launch at Login",
+                    whatItDoes: "Starts HomeRow automatically whenever you log in to your Mac.",
+                    howItWorks: "Uses macOS Login Items so you don't have to reopen the app after a restart.",
+                    isOn: Binding(
+                        get: { engine.launchAtLogin },
+                        set: { engine.setLaunchAtLogin($0) }
+                    )
+                )
+                if let err = engine.launchAtLoginError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
         }
         .formStyle(.grouped)
@@ -295,44 +310,42 @@ struct KeysTab: View {
 
                 HStack {
                     Spacer(minLength: 0)
-                    GlassEffectContainer(spacing: 5) {
-                        HStack(alignment: .top, spacing: 8) {
-                            VStack(spacing: 6) {
-                                HStack(spacing: 4) {
-                                    ForEach(leftSlots, id: \.code) { item in
-                                        NativeKeycapMenu(
-                                            letter: displayColemak ? item.colemak : item.qwerty,
-                                            mod: engine.keyMods[item.code] ?? .none,
-                                            hasBump: item.code == 3,
-                                            onSelect: { engine.keyMods[item.code] = $0 }
-                                        )
-                                    }
-                                }
-                                Text("Left Hand")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(spacing: 6) {
                             HStack(spacing: 4) {
-                                NativeStaticKeycap(letter: "G")
-                                NativeStaticKeycap(letter: displayColemak ? "M" : "H")
-                            }
-
-                            VStack(spacing: 6) {
-                                HStack(spacing: 4) {
-                                    ForEach(rightSlots, id: \.code) { item in
-                                        NativeKeycapMenu(
-                                            letter: displayColemak ? item.colemak : item.qwerty,
-                                            mod: engine.keyMods[item.code] ?? .none,
-                                            hasBump: item.code == 38,
-                                            onSelect: { engine.keyMods[item.code] = $0 }
-                                        )
-                                    }
+                                ForEach(leftSlots, id: \.code) { item in
+                                    NativeKeycapMenu(
+                                        letter: displayColemak ? item.colemak : item.qwerty,
+                                        mod: engine.keyMods[item.code] ?? .none,
+                                        hasBump: item.code == 3,
+                                        onSelect: { engine.keyMods[item.code] = $0 }
+                                    )
                                 }
-                                Text("Right Hand")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
                             }
+                            Text("Left Hand")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack(spacing: 4) {
+                            NativeStaticKeycap(letter: "G")
+                            NativeStaticKeycap(letter: displayColemak ? "M" : "H")
+                        }
+
+                        VStack(spacing: 6) {
+                            HStack(spacing: 4) {
+                                ForEach(rightSlots, id: \.code) { item in
+                                    NativeKeycapMenu(
+                                        letter: displayColemak ? item.colemak : item.qwerty,
+                                        mod: engine.keyMods[item.code] ?? .none,
+                                        hasBump: item.code == 38,
+                                        onSelect: { engine.keyMods[item.code] = $0 }
+                                    )
+                                }
+                            }
+                            Text("Right Hand")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                     }
                     Spacer(minLength: 0)
@@ -389,6 +402,8 @@ struct NativeKeycapMenu: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .accessibilityLabel("\(letter) key, hold for \(mod.rawValue)")
+        .accessibilityHint("Choose which modifier triggers when holding \(letter)")
     }
 
     private var keycapBody: some View {
@@ -406,10 +421,15 @@ struct NativeKeycapMenu: View {
             }
         }
         .frame(width: 42, height: 54)
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .glassEffect(
-            mod == .none ? .regular.interactive() : .regular.tint(.accentColor.opacity(0.24)).interactive(),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(mod == .none ? Color(nsColor: .controlBackgroundColor) : Color.accentColor.opacity(0.14))
+                .shadow(color: Color.black.opacity(0.06), radius: 1, y: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(mod == .none ? Color(nsColor: .separatorColor) : Color.accentColor.opacity(0.5), lineWidth: 1)
         )
     }
 
@@ -432,7 +452,15 @@ struct NativeStaticKeycap: View {
             .font(.system(size: 14, weight: .medium, design: .rounded))
             .foregroundStyle(.tertiary)
             .frame(width: 32, height: 54)
-            .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
+            )
+            .accessibilityLabel("\(letter) key, standard letter")
     }
 }
 
@@ -480,7 +508,7 @@ struct TimingTab: View {
                 Button("Reset to Defaults", role: .destructive) {
                     engine.resetDefaults()
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.bordered)
             }
         }
         .formStyle(.grouped)

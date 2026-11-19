@@ -1,5 +1,6 @@
 import Cocoa
 import ApplicationServices
+import ServiceManagement
 
 enum ModChoice: String, CaseIterable, Identifiable {
     case none = "Off"
@@ -41,13 +42,22 @@ final class HomeRowEngine: ObservableObject {
     ]
 
     @Published var isEnabled: Bool = true {
-        didSet { UserDefaults.standard.set(isEnabled, forKey: "isEnabled") }
+        didSet {
+            UserDefaults.standard.set(isEnabled, forKey: "isEnabled")
+            if !isEnabled { clearActiveState() }
+        }
     }
     @Published var homeRowModsEnabled: Bool = true {
-        didSet { UserDefaults.standard.set(homeRowModsEnabled, forKey: "homeRowModsEnabled") }
+        didSet {
+            UserDefaults.standard.set(homeRowModsEnabled, forKey: "homeRowModsEnabled")
+            if !homeRowModsEnabled { clearActiveState() }
+        }
     }
     @Published var navLayerEnabled: Bool = false {
-        didSet { UserDefaults.standard.set(navLayerEnabled, forKey: "navLayerEnabled") }
+        didSet {
+            UserDefaults.standard.set(navLayerEnabled, forKey: "navLayerEnabled")
+            if !navLayerEnabled { clearActiveState() }
+        }
     }
     @Published var swapCmdCtrlTab: Bool = true {
         didSet { UserDefaults.standard.set(swapCmdCtrlTab, forKey: "swapCmdCtrlTab") }
@@ -77,6 +87,8 @@ final class HomeRowEngine: ObservableObject {
     }
 
     @Published var hasAccessibility: Bool = false
+    @Published var launchAtLogin: Bool = false
+    @Published var launchAtLoginError: String? = nil
 
     // Auto-tune calibration state
     @Published var isCalibrating: Bool = false
@@ -92,6 +104,7 @@ final class HomeRowEngine: ObservableObject {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var permissionTimer: Timer?
 
     private let leftHandKeys: Set<CGKeyCode> = [
         12, 13, 14, 15, 17,
@@ -156,7 +169,39 @@ final class HomeRowEngine: ObservableObject {
             }
             if !parsed.isEmpty { keyMods = parsed }
         }
+        launchAtLogin = (SMAppService.mainApp.status == .enabled)
         checkAccessibility(prompt: false)
+    }
+
+    deinit {
+        permissionTimer?.invalidate()
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+        if let src = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes)
+        }
+    }
+
+    private func clearActiveState() {
+        pending.removeAll()
+        activeMods = []
+        leftCmdDown = false
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginError = nil
+        } catch {
+            launchAtLoginError = error.localizedDescription
+        }
+        launchAtLogin = (SMAppService.mainApp.status == .enabled)
     }
 
     func resetDefaults() {
@@ -174,6 +219,7 @@ final class HomeRowEngine: ObservableObject {
     }
 
     func startCalibration() {
+        clearActiveState()
         calibrationInput = ""
         calibKeyDownTimes.removeAll()
         calibTapDurationsMs.removeAll()
@@ -244,11 +290,20 @@ final class HomeRowEngine: ObservableObject {
     func checkAccessibility(prompt: Bool) -> Bool {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(opts)
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
             self.hasAccessibility = trusted
-        }
-        if trusted && eventTap == nil {
-            startTap()
+            if trusted {
+                self.permissionTimer?.invalidate()
+                self.permissionTimer = nil
+                if self.eventTap == nil {
+                    self.startTap()
+                }
+            } else if self.permissionTimer == nil {
+                self.permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+                    self?.checkAccessibility(prompt: false)
+                }
+            }
         }
         return trusted
     }
