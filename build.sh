@@ -3,7 +3,7 @@ set -euo pipefail
 
 mkdir -p HomeRow.app/Contents/MacOS
 cp Info.plist HomeRow.app/Contents/Info.plist
-swiftc -O -parse-as-library \
+swiftc -O -target arm64-apple-macosx26.0 -parse-as-library \
   Sources/HomeRowEngine.swift \
   Sources/HomeRowApp.swift \
   -o HomeRow.app/Contents/MacOS/HomeRow \

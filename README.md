@@ -13,7 +13,7 @@ A simple, native macOS menu bar app for **ZMK-style home-row mods**—with **all
 
 ## Build & Run
 
-Requires macOS 13+ and Swift (`xcode-select --install`).
+Requires macOS 26+ and Swift (`xcode-select --install`).
 
 ```sh
 chmod +x build.sh
