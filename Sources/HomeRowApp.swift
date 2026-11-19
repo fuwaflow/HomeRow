@@ -13,7 +13,7 @@ final class SetupWindowController {
         let hosting = NSHostingController(rootView: SetupView(engine: engine))
         let win = NSWindow(contentViewController: hosting)
         win.title = "HomeRow"
-        win.setContentSize(NSSize(width: 680, height: 480))
+        win.setContentSize(NSSize(width: 720, height: 520))
         win.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
         win.toolbarStyle = .unified
         win.center()
@@ -120,8 +120,9 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
             }
         }
-        .padding(14)
-        .frame(width: 270)
+        .padding(16)
+        .frame(width: 300)
+        .controlSize(.large)
         .onAppear {
             engine.checkAccessibility(prompt: false)
         }
@@ -161,7 +162,8 @@ struct SetupView: View {
                 TimingTab(engine: engine)
             }
         }
-        .frame(width: 680, height: 480)
+        .frame(width: 720, height: 520)
+        .controlSize(.large)
     }
 }
 
@@ -379,24 +381,25 @@ struct KeycapButton: View {
         } label: {
             VStack(spacing: 4) {
                 Text(letter)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
                 Text(shortSymbol)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(mod == .none ? Color.secondary : Color.accentColor)
                 if hasBump {
                     Capsule()
                         .fill(Color.secondary.opacity(0.45))
-                        .frame(width: 10, height: 2)
+                        .frame(width: 12, height: 2.5)
                 }
             }
-            .frame(width: 42, height: 54)
+            .frame(width: 48, height: 62)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(mod == .none ? Color.secondary.opacity(0.08) : Color.accentColor.opacity(0.12))
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(mod == .none ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(Color.accentColor.opacity(0.14)))
+                    .shadow(color: Color.black.opacity(0.08), radius: 2, y: 1)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(mod == .none ? Color.secondary.opacity(0.25) : Color.accentColor.opacity(0.5), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(mod == .none ? Color.primary.opacity(0.12) : Color.accentColor.opacity(0.55), lineWidth: 1.2)
             )
         }
         .menuStyle(.borderlessButton)
@@ -423,14 +426,14 @@ struct StaticKeycap: View {
                 .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundStyle(.tertiary)
         }
-        .frame(width: 34, height: 54)
+        .frame(width: 36, height: 62)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.secondary.opacity(0.05))
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(.ultraThinMaterial)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
     }
 }

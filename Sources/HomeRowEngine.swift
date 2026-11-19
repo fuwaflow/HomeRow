@@ -364,7 +364,8 @@ final class HomeRowEngine: ObservableObject {
                     return Unmanaged.passUnretained(event)
                 }
 
-                // Resolve any already-pending home-row keys first (e.g. rolling J -> K on the same hand)
+                // Resolve any already-pending home-row keys first (e.g. rolling J -> K on the same hand, or E -> A opposite hand)
+                var triggeredOppositeMod = false
                 for (pKey, var pVal) in pending where pKey != keyCode {
                     let opposite = pVal.isLeft ? rightHandKeys.contains(keyCode) : leftHandKeys.contains(keyCode)
                     if opposite || !oppositeHandOnly {
@@ -372,6 +373,7 @@ final class HomeRowEngine: ObservableObject {
                         pVal.promotedToMod = true
                         pending[pKey] = pVal
                         activeMods.insert(pVal.flag)
+                        triggeredOppositeMod = true
                     } else if !pVal.promotedToMod {
                         pVal.timer?.cancel()
                         pending.removeValue(forKey: pKey)
@@ -379,6 +381,13 @@ final class HomeRowEngine: ObservableObject {
                         emitKey(pKey, down: true, flags: f)
                         emitKey(pKey, down: false, flags: f)
                     }
+                }
+
+                // If an opposite-hand modifier is already active (e.g. holding E/Cmd and pressing A),
+                // emit the modified key immediately on keyDown instead of putting it into pending.
+                if triggeredOppositeMod || !activeMods.isEmpty {
+                    event.flags = event.flags.union(activeMods)
+                    return Unmanaged.passUnretained(event)
                 }
 
                 let sinceOther = now - lastNonModKeyTime
