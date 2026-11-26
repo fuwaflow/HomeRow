@@ -1,0 +1,437 @@
+using Gtk 4.0;
+using Adw 1;
+
+Gtk.Adjustment adj_tapping {
+  lower: 120;
+  upper: 350;
+  step-increment: 5;
+  page-increment: 20;
+  value: 200;
+}
+
+Gtk.Adjustment adj_idle {
+  lower: 0;
+  upper: 400;
+  step-increment: 5;
+  page-increment: 20;
+  value: 250;
+}
+
+Gtk.Adjustment adj_quick {
+  lower: 80;
+  upper: 300;
+  step-increment: 5;
+  page-increment: 20;
+  value: 175;
+}
+
+Adw.ApplicationWindow win {
+  title: "HomeRow";
+  default-width: 820;
+  default-height: 620;
+  width-request: 680;
+  height-request: 480;
+
+  content: Adw.NavigationSplitView split_view {
+    sidebar: Adw.NavigationPage {
+      title: "HomeRow";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
+
+          child: Gtk.ListBox sidebar_list {
+            selection-mode: single;
+            styles ["navigation-sidebar"]
+          };
+        };
+      };
+    };
+
+    content: Adw.NavigationPage detail_page {
+      title: "Quick Setup";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        [top]
+        Adw.Banner banner {
+          title: "HomeRow daemon is not running — enable system service to remap keys";
+          button-label: "Enable & Start";
+        }
+
+        content: Gtk.Stack content_stack {
+          transition-type: crossfade;
+
+          Gtk.StackPage {
+            name: "quick-setup";
+            child: Adw.PreferencesPage {
+              Adw.PreferencesGroup {
+                Gtk.ListBox {
+                  selection-mode: none;
+                  styles ["boxed-list"]
+
+                  Gtk.ListBoxRow {
+                    activatable: false;
+
+                    child: Gtk.Box {
+                      orientation: horizontal;
+                      spacing: 14;
+                      margin-top: 10;
+                      margin-bottom: 10;
+                      margin-start: 10;
+                      margin-end: 10;
+
+                      Gtk.Image {
+                        icon-name: "input-keyboard-symbolic";
+                        pixel-size: 24;
+                        styles ["homerow-hero-icon"]
+                      }
+
+                      Gtk.Box {
+                        orientation: vertical;
+                        spacing: 3;
+
+                        Gtk.Label {
+                          label: "Welcome to HomeRow";
+                          xalign: 0;
+                          styles ["heading"]
+                        }
+
+                        Gtk.Label {
+                          label: "Type normally for a few seconds and HomeRow will find the most comfortable timing for your hands.";
+                          xalign: 0;
+                          wrap: true;
+                          styles ["dim-label"]
+                        }
+                      }
+                    };
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: "Quick Typing Test";
+
+                Adw.ActionRow calib_idle_row {
+                  title: "Automatic Setup";
+                  subtitle: "Current feel: Balanced (200 ms)";
+
+                  [suffix]
+                  Gtk.Button start_calib_btn {
+                    label: "Start Test";
+                    valign: center;
+                    styles ["suggested-action"]
+                  }
+                }
+
+                Gtk.ListBoxRow calib_active_row {
+                  activatable: false;
+                  visible: false;
+
+                  child: Gtk.Box {
+                    orientation: vertical;
+                    spacing: 10;
+                    margin-top: 12;
+                    margin-bottom: 12;
+                    margin-start: 12;
+                    margin-end: 12;
+
+                    Gtk.Label {
+                      label: "Type this sentence at your normal speed:";
+                      xalign: 0;
+                      styles ["caption", "dim-label"]
+                    }
+
+                    Gtk.Label {
+                      label: "the quick brown fox jumps over the lazy dog";
+                      xalign: 0;
+                      selectable: true;
+                      styles ["monospace"]
+                    }
+
+                    Gtk.Entry calib_entry {
+                      placeholder-text: "Click here and type…";
+                    }
+
+                    Gtk.Box {
+                      orientation: horizontal;
+                      spacing: 8;
+
+                      Gtk.Label calib_status_lbl {
+                        label: "Keep typing… (0/8 keys)";
+                        xalign: 0;
+                        hexpand: true;
+                        styles ["caption"]
+                      }
+
+                      Gtk.Button calib_cancel_btn {
+                        label: "Cancel";
+                      }
+
+                      Gtk.Button calib_save_btn {
+                        label: "Save";
+                        sensitive: false;
+                        styles ["suggested-action"]
+                      }
+                    }
+                  };
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: "Features";
+
+                Adw.SwitchRow sw_enabled {
+                  title: "Enable HomeRow";
+                  subtitle: "Master switch that turns all HomeRow features on or off. When off, your keyboard behaves 100% normally.";
+                  use-markup: false;
+                }
+
+                Adw.SwitchRow sw_hrm {
+                  title: "Home Row Shortcuts";
+                  subtitle: "Lets your resting home-row keys act as Shift, Ctrl, Alt, and Super.";
+                  use-markup: false;
+                }
+
+                Adw.SwitchRow sw_caps {
+                  title: "Caps Lock → Backspace";
+                  subtitle: "Remaps Caps Lock to Backspace at the evdev level so holding it repeats smoothly without toggling the LED.";
+                  use-markup: false;
+                }
+
+                Adw.SwitchRow sw_nav {
+                  title: "Left Cmd → Arrow Keys";
+                  subtitle: "Hold the key left of Spacebar (Left Cmd) and press J/K/L/; for arrows, U/O for Home/End, H/N for Page Up/Down.";
+                  use-markup: false;
+                }
+
+                Adw.SwitchRow sw_iso {
+                  title: "Fix Apple ISO ~ / § Keys";
+                  subtitle: "Swaps the key left of 1 and the key left of Z so Apple ISO keyboards match macOS positions.";
+                  use-markup: false;
+                }
+
+                Adw.SwitchRow sw_shifts_toggle {
+                  title: "Both Shifts → Pause / Resume";
+                  subtitle: "Press Left Shift + Right Shift together anytime (e.g. in games or VMs) to toggle HomeRow on or off.";
+                  use-markup: false;
+                }
+
+                Adw.SwitchRow sw_login {
+                  title: "Launch at Login";
+                  subtitle: "Starts the HomeRow systemd service automatically on boot so remapping is always active.";
+                  use-markup: false;
+                }
+              }
+            };
+          }
+
+          Gtk.StackPage {
+            name: "keys";
+            child: Adw.PreferencesPage {
+              Adw.PreferencesGroup {
+                title: "Your Home Row";
+                description: "Click any key below to choose what happens when you hold it. Press keys on your keyboard to see live tap vs. modifier feedback.";
+
+                Adw.ActionRow {
+                  title: "Keyboard Labels";
+                  use-markup: false;
+
+                  [suffix]
+                  Gtk.Box {
+                    orientation: horizontal;
+                    valign: center;
+                    styles ["linked"]
+
+                    Gtk.ToggleButton btn_qwerty {
+                      label: "QWERTY";
+                    }
+
+                    Gtk.ToggleButton btn_colemak {
+                      label: "Colemak-DH";
+                      group: btn_qwerty;
+                    }
+                  }
+                }
+
+                Gtk.ListBoxRow {
+                  activatable: false;
+
+                  child: Gtk.Box keycap_outer {
+                    orientation: vertical;
+                    spacing: 10;
+                    halign: center;
+                    margin-top: 16;
+                    margin-bottom: 16;
+
+                    Gtk.Box keycap_row_box {
+                      orientation: horizontal;
+                      spacing: 10;
+                      halign: center;
+                    }
+
+                    Gtk.Label live_feedback_lbl {
+                      label: "Try tapping or holding a home-row key";
+                      styles ["caption", "dim-label"]
+                    }
+                  };
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: "Left Cmd Navigation Layer";
+                description: "Hold the key left of Spacebar to navigate with your right hand. Other shortcuts like Left Cmd + Tab pass through as Ctrl.";
+
+                Gtk.ListBoxRow {
+                  activatable: false;
+
+                  child: Gtk.Box nav_diagram_box {
+                    orientation: vertical;
+                    spacing: 8;
+                    halign: center;
+                    margin-top: 14;
+                    margin-bottom: 14;
+                  };
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: "About Home-Row Keys";
+
+                Adw.ActionRow {
+                  title: "Tap vs. Hold";
+                  subtitle: "Tapping types the letter as usual. Left-hand keys modify right-hand keys, and right-hand keys modify left-hand keys when Safer Two-Hand Shortcuts is enabled.";
+                  use-markup: false;
+                }
+              }
+            };
+          }
+
+          Gtk.StackPage {
+            name: "timing";
+            child: Adw.PreferencesPage {
+              Adw.PreferencesGroup {
+                title: "Protection";
+
+                Adw.SwitchRow sw_opposite {
+                  title: "Safer Two-Hand Shortcuts";
+                  subtitle: "Prevents same-hand typing rolls from triggering accidental shortcuts.";
+                  use-markup: false;
+                }
+
+                Adw.SwitchRow sw_pinky_grace {
+                  title: "Pinky & Ring Forgiveness (+30 ms)";
+                  subtitle: "Adds 30 ms of extra hold delay to pinky and ring fingers so slower outer-finger rolls don't misfire.";
+                  use-markup: false;
+                }
+              }
+
+              Adw.PreferencesGroup {
+                title: "Delays";
+
+                Adw.ActionRow {
+                  title: "Hold Delay";
+                  subtitle: "Release faster than this to type the letter; hold longer to activate the modifier.";
+                  use-markup: false;
+
+                  [suffix]
+                  Gtk.Box {
+                    orientation: horizontal;
+                    spacing: 8;
+                    valign: center;
+
+                    Gtk.Scale sl_tapping_scale {
+                      orientation: horizontal;
+                      adjustment: adj_tapping;
+                      draw-value: false;
+                      width-request: 180;
+                    }
+
+                    Gtk.Label sl_tapping_lbl {
+                      label: "200 ms";
+                      width-chars: 6;
+                      styles ["numeric", "dim-label"]
+                    }
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: "Fast-Typing Protection";
+                  subtitle: "If you pressed any other key within this window, holding a home-row key won't trigger a modifier.";
+                  use-markup: false;
+
+                  [suffix]
+                  Gtk.Box {
+                    orientation: horizontal;
+                    spacing: 8;
+                    valign: center;
+
+                    Gtk.Scale sl_idle_scale {
+                      orientation: horizontal;
+                      adjustment: adj_idle;
+                      draw-value: false;
+                      width-request: 180;
+                    }
+
+                    Gtk.Label sl_idle_lbl {
+                      label: "250 ms";
+                      width-chars: 6;
+                      styles ["numeric", "dim-label"]
+                    }
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: "Double-Tap Repeat";
+                  subtitle: "Tap a key and press it again within this window to hold and repeat the character (like 'aaaa').";
+                  use-markup: false;
+
+                  [suffix]
+                  Gtk.Box {
+                    orientation: horizontal;
+                    spacing: 8;
+                    valign: center;
+
+                    Gtk.Scale sl_quick_scale {
+                      orientation: horizontal;
+                      adjustment: adj_quick;
+                      draw-value: false;
+                      width-request: 180;
+                    }
+
+                    Gtk.Label sl_quick_lbl {
+                      label: "175 ms";
+                      width-chars: 6;
+                      styles ["numeric", "dim-label"]
+                    }
+                  }
+                }
+              }
+
+              Adw.PreferencesGroup {
+                Adw.ActionRow {
+                  title: "Defaults";
+                  subtitle: "Restore all HomeRow timing and key assignments.";
+                  use-markup: false;
+
+                  [suffix]
+                  Gtk.Button reset_btn {
+                    label: "Reset to Defaults";
+                    valign: center;
+                    styles ["destructive-action"]
+                  }
+                }
+              }
+            };
+          }
+        };
+      };
+    };
+  };
+}
