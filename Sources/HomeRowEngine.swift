@@ -26,19 +26,20 @@ struct HomeRowSlot: Identifiable {
     let keyCode: CGKeyCode
     let label: String
     let isLeft: Bool
+    let isPinkyOrRing: Bool
     var id: CGKeyCode { keyCode }
 }
 
 final class HomeRowEngine: ObservableObject {
     static let slots: [HomeRowSlot] = [
-        HomeRowSlot(keyCode: 0,  label: "Left Pinky (A)",  isLeft: true),
-        HomeRowSlot(keyCode: 1,  label: "Left Ring (S/R)", isLeft: true),
-        HomeRowSlot(keyCode: 2,  label: "Left Mid (D/S)",  isLeft: true),
-        HomeRowSlot(keyCode: 3,  label: "Left Index (F/T)",isLeft: true),
-        HomeRowSlot(keyCode: 38, label: "Right Index (J/N)",isLeft: false),
-        HomeRowSlot(keyCode: 40, label: "Right Mid (K/E)", isLeft: false),
-        HomeRowSlot(keyCode: 37, label: "Right Ring (L/I)",isLeft: false),
-        HomeRowSlot(keyCode: 41, label: "Right Pinky (;/O)",isLeft: false),
+        HomeRowSlot(keyCode: 0,  label: "Left Pinky (A)",  isLeft: true,  isPinkyOrRing: true),
+        HomeRowSlot(keyCode: 1,  label: "Left Ring (S/R)", isLeft: true,  isPinkyOrRing: true),
+        HomeRowSlot(keyCode: 2,  label: "Left Mid (D/S)",  isLeft: true,  isPinkyOrRing: false),
+        HomeRowSlot(keyCode: 3,  label: "Left Index (F/T)",isLeft: true,  isPinkyOrRing: false),
+        HomeRowSlot(keyCode: 38, label: "Right Index (J/N)",isLeft: false, isPinkyOrRing: false),
+        HomeRowSlot(keyCode: 40, label: "Right Mid (K/E)", isLeft: false, isPinkyOrRing: false),
+        HomeRowSlot(keyCode: 37, label: "Right Ring (L/I)",isLeft: false, isPinkyOrRing: true),
+        HomeRowSlot(keyCode: 41, label: "Right Pinky (;/O)",isLeft: false, isPinkyOrRing: true),
     ]
 
     @Published var isEnabled: Bool = true {
@@ -72,6 +73,12 @@ final class HomeRowEngine: ObservableObject {
     @Published var oppositeHandOnly: Bool = true {
         didSet { UserDefaults.standard.set(oppositeHandOnly, forKey: "oppositeHandOnly") }
     }
+    @Published var pinkyRingGrace: Bool = true {
+        didSet { UserDefaults.standard.set(pinkyRingGrace, forKey: "pinkyRingGrace") }
+    }
+    @Published var bothShiftsToggle: Bool = true {
+        didSet { UserDefaults.standard.set(bothShiftsToggle, forKey: "bothShiftsToggle") }
+    }
 
     @Published var tappingTermMs: Double = 200 {
         didSet { UserDefaults.standard.set(tappingTermMs, forKey: "tappingTermMs") }
@@ -102,6 +109,12 @@ final class HomeRowEngine: ObservableObject {
     @Published var sampleCount: Int = 0
     @Published var recommendedTapMs: Double?
     @Published var recommendedIdleMs: Double?
+
+    @Published var pendingSlots: Set<CGKeyCode> = []
+    @Published var promotedSlots: Set<CGKeyCode> = []
+    @Published var lastTappedSlot: CGKeyCode? = nil
+    @Published var lastNavKey: CGKeyCode? = nil
+    @Published var isNavLayerActive: Bool = false
 
     private var calibKeyDownTimes: [CGKeyCode: CFAbsoluteTime] = [:]
     private var calibTapDurationsMs: [Double] = []
@@ -166,6 +179,8 @@ final class HomeRowEngine: ObservableObject {
     private var lastNonModKeyTime: CFAbsoluteTime = 0
     private var lastTapReleaseTime: [CGKeyCode: CFAbsoluteTime] = [:]
     private var leftCmdDown: Bool = false
+    private var bothShiftsConsumed: Bool = false
+    private var tapFlashToken: UInt64 = 0
     private let syntheticTag: Int64 = 0x48524D31
 
     init() {
@@ -176,6 +191,8 @@ final class HomeRowEngine: ObservableObject {
         if d.object(forKey: "navLayerEnabled") != nil { navLayerEnabled = d.bool(forKey: "navLayerEnabled") }
         if d.object(forKey: "swapCmdCtrlTab") != nil { swapCmdCtrlTab = d.bool(forKey: "swapCmdCtrlTab") }
         if d.object(forKey: "oppositeHandOnly") != nil { oppositeHandOnly = d.bool(forKey: "oppositeHandOnly") }
+        if d.object(forKey: "pinkyRingGrace") != nil { pinkyRingGrace = d.bool(forKey: "pinkyRingGrace") }
+        if d.object(forKey: "bothShiftsToggle") != nil { bothShiftsToggle = d.bool(forKey: "bothShiftsToggle") }
         if d.object(forKey: "tappingTermMs") != nil { tappingTermMs = d.double(forKey: "tappingTermMs") }
         if d.object(forKey: "priorIdleMs") != nil { priorIdleMs = d.double(forKey: "priorIdleMs") }
         if d.object(forKey: "quickTapMs") != nil { quickTapMs = d.double(forKey: "quickTapMs") }
@@ -226,6 +243,40 @@ final class HomeRowEngine: ObservableObject {
         bufferedKeys.removeAll()
         synthesizedDownKeys.removeAll()
         leftCmdDown = false
+        lastNavKey = nil
+        syncLiveUIState()
+    }
+
+    private func slotTappingSec(for keyCode: CGKeyCode) -> Double {
+        let isOuter = Self.slots.first(where: { $0.keyCode == keyCode })?.isPinkyOrRing ?? false
+        let extra = (pinkyRingGrace && isOuter) ? 30.0 : 0.0
+        return (tappingTermMs + extra) / 1000.0
+    }
+
+    private func syncLiveUIState() {
+        var newPending: Set<CGKeyCode> = []
+        var newPromoted: Set<CGKeyCode> = []
+        for (code, item) in pending {
+            if item.promotedToMod {
+                newPromoted.insert(code)
+            } else {
+                newPending.insert(code)
+            }
+        }
+        if pendingSlots != newPending { pendingSlots = newPending }
+        if promotedSlots != newPromoted { promotedSlots = newPromoted }
+        let navActive = isEnabled && navLayerEnabled && leftCmdDown
+        if isNavLayerActive != navActive { isNavLayerActive = navActive }
+    }
+
+    private func flashTappedSlot(_ keyCode: CGKeyCode) {
+        tapFlashToken &+= 1
+        let token = tapFlashToken
+        lastTappedSlot = keyCode
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
+            guard let self, self.tapFlashToken == token else { return }
+            self.lastTappedSlot = nil
+        }
     }
 
     private func canModify(_ targetKey: CGKeyCode, with modIsLeft: Bool) -> Bool {
@@ -306,6 +357,8 @@ final class HomeRowEngine: ObservableObject {
         priorIdleMs = 250
         quickTapMs = 175
         oppositeHandOnly = true
+        pinkyRingGrace = true
+        bothShiftsToggle = true
         homeRowModsEnabled = true
         capsLockToBackspace = true
         navLayerEnabled = false
@@ -451,9 +504,11 @@ final class HomeRowEngine: ObservableObject {
             p.timer?.cancel()
             lastTapReleaseTime[pKey] = now
             lastNonModKeyTime = now
+            flashTappedSlot(pKey)
             emitKey(pKey, down: true, flags: activeMods)
             emitKey(pKey, down: false, flags: activeMods)
         }
+        syncLiveUIState()
         if alsoFlushBuffered && !bufferedKeys.isEmpty {
             let bufs = bufferedKeys
             bufferedKeys.removeAll()
@@ -478,6 +533,7 @@ final class HomeRowEngine: ObservableObject {
         if changed {
             recomputeActiveMods()
         }
+        syncLiveUIState()
         if flushBuffered && !bufferedKeys.isEmpty {
             let bufs = bufferedKeys
             bufferedKeys.removeAll()
@@ -509,21 +565,42 @@ final class HomeRowEngine: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
+        if bothShiftsToggle && type == .flagsChanged && (keyCode == 56 || keyCode == 60) {
+            let leftDown = (event.flags.rawValue & 0x2) != 0
+            let rightDown = (event.flags.rawValue & 0x4) != 0
+            if leftDown && rightDown && !bothShiftsConsumed {
+                bothShiftsConsumed = true
+                isEnabled.toggle()
+            } else if !leftDown && !rightDown {
+                bothShiftsConsumed = false
+            }
+        }
+
         guard isEnabled else { return Unmanaged.passUnretained(event) }
 
         if type == .flagsChanged && keyCode == 55 {
             leftCmdDown = event.flags.contains(.maskCommand)
+            if !leftCmdDown { lastNavKey = nil }
+            syncLiveUIState()
             if navLayerEnabled { return nil }
             return Unmanaged.passUnretained(event)
         }
 
         if navLayerEnabled && leftCmdDown && (type == .keyDown || type == .keyUp) {
             if let mapped = navMap[keyCode] {
+                lastNavKey = (type == .keyDown) ? keyCode : nil
                 var f = event.flags
                 f.remove(.maskCommand)
                 f.formUnion(mapped.mods)
                 f.formUnion(activeMods)
                 emitKey(mapped.key, down: type == .keyDown, flags: f)
+                return nil
+            } else {
+                lastNavKey = nil
+                var f = event.flags
+                f.insert(.maskCommand)
+                f.formUnion(activeMods)
+                emitKey(keyCode, down: type == .keyDown, flags: f)
                 return nil
             }
         }
@@ -535,14 +612,13 @@ final class HomeRowEngine: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
-        let tappingSec = tappingTermMs / 1000.0
         let priorIdleSec = priorIdleMs / 1000.0
         let quickTapSec = quickTapMs / 1000.0
 
         if type == .keyUp && pending[keyCode] == nil {
             if bufferedKeys.contains(where: { $0.keyCode == keyCode }) {
                 let eligible = pending.values.filter { !$0.promotedToMod && canModify(keyCode, with: $0.isLeft) }
-                if !eligible.isEmpty && eligible.contains(where: { !$0.withinPriorIdle || (now - $0.downTime >= tappingSec) }) {
+                if !eligible.isEmpty && eligible.contains(where: { !$0.withinPriorIdle || (now - $0.downTime >= slotTappingSec(for: $0.keyCode)) }) {
                     promotePendingKeys(eligible.map(\.keyCode), flushBuffered: true)
                 } else {
                     let allUnpromoted = pending.values.filter { !$0.promotedToMod }.map(\.keyCode)
@@ -580,12 +656,13 @@ final class HomeRowEngine: ObservableObject {
                         timer: nil
                     )
                     recomputeActiveMods()
+                    syncLiveUIState()
                     return nil
                 }
 
                 let oppositeUnpromoted = pending.values.filter { !$0.promotedToMod && $0.keyCode != keyCode && canModify(keyCode, with: $0.isLeft) }
                 if !oppositeUnpromoted.isEmpty {
-                    if oppositeUnpromoted.contains(where: { now - $0.downTime >= tappingSec }) {
+                    if oppositeUnpromoted.contains(where: { now - $0.downTime >= slotTappingSec(for: $0.keyCode) }) {
                         promotePendingKeys(oppositeUnpromoted.map(\.keyCode), flushBuffered: true)
                         synthesizedDownKeys.insert(keyCode)
                         emitKey(keyCode, down: true, flags: event.flags.union(activeMods))
@@ -603,6 +680,7 @@ final class HomeRowEngine: ObservableObject {
                 }
 
                 if !event.flags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty {
+                    flashTappedSlot(keyCode)
                     return Unmanaged.passUnretained(event)
                 }
 
@@ -610,10 +688,12 @@ final class HomeRowEngine: ObservableObject {
                 let sinceSame = now - (lastTapReleaseTime[keyCode] ?? 0)
                 if sameHandUnpromoted.isEmpty && sinceSame < quickTapSec {
                     lastNonModKeyTime = now
+                    flashTappedSlot(keyCode)
                     event.flags = event.flags.union(activeMods)
                     return Unmanaged.passUnretained(event)
                 }
 
+                let slotSec = slotTappingSec(for: keyCode)
                 let withinIdle = (now - lastNonModKeyTime) < priorIdleSec
                 var item = PendingKey(
                     keyCode: keyCode,
@@ -642,16 +722,19 @@ final class HomeRowEngine: ObservableObject {
                 }
                 item.timer = work
                 pending[keyCode] = item
-                DispatchQueue.main.asyncAfter(deadline: .now() + tappingSec, execute: work)
+                syncLiveUIState()
+                DispatchQueue.main.asyncAfter(deadline: .now() + slotSec, execute: work)
                 return nil
             } else {
                 if let p = pending[keyCode] {
+                    let slotSec = slotTappingSec(for: keyCode)
                     p.timer?.cancel()
                     if p.promotedToMod {
                         pending.removeValue(forKey: keyCode)
                         recomputeActiveMods()
+                        syncLiveUIState()
                     } else if let firstBuf = bufferedKeys.first,
-                              (now - p.downTime >= tappingSec),
+                              (now - p.downTime >= slotSec),
                               canModify(firstBuf.keyCode, with: p.isLeft) {
                         let toPromote = pending.values
                             .filter { !$0.promotedToMod && canModify(firstBuf.keyCode, with: $0.isLeft) }
@@ -659,8 +742,10 @@ final class HomeRowEngine: ObservableObject {
                         promotePendingKeys(toPromote, flushBuffered: true)
                         pending.removeValue(forKey: keyCode)
                         recomputeActiveMods()
-                    } else if (now - p.downTime >= tappingSec) && bufferedKeys.isEmpty {
+                        syncLiveUIState()
+                    } else if (now - p.downTime >= slotSec) && bufferedKeys.isEmpty {
                         pending.removeValue(forKey: keyCode)
+                        syncLiveUIState()
                     } else {
                         let toFlush = pending.values
                             .filter { !$0.promotedToMod && $0.isLeft == p.isLeft && $0.downTime <= p.downTime }
@@ -685,7 +770,7 @@ final class HomeRowEngine: ObservableObject {
             var ineligible: [CGKeyCode] = []
             for pVal in pending.values where !pVal.promotedToMod {
                 if keyCode == 51 {
-                    if (now - pVal.downTime >= tappingSec) || !pVal.withinPriorIdle {
+                    if (now - pVal.downTime >= slotTappingSec(for: pVal.keyCode)) || !pVal.withinPriorIdle {
                         eligible.append(pVal.keyCode)
                     } else {
                         ineligible.append(pVal.keyCode)
@@ -706,7 +791,7 @@ final class HomeRowEngine: ObservableObject {
             if !eligible.isEmpty {
                 if eligible.contains(where: {
                     guard let p = pending[$0] else { return false }
-                    return now - p.downTime >= tappingSec
+                    return now - p.downTime >= slotTappingSec(for: $0)
                 }) {
                     promotePendingKeys(eligible, flushBuffered: true)
                 } else {

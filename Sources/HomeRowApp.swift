@@ -89,6 +89,7 @@ struct MenuBarView: View {
             Toggle("Caps Lock → Backspace", isOn: $engine.capsLockToBackspace)
             Toggle("Left Cmd → Arrow Keys", isOn: $engine.navLayerEnabled)
             Toggle("Swap Cmd+Tab & Ctrl+Tab", isOn: $engine.swapCmdCtrlTab)
+            Toggle("Both Shifts → Pause / Resume", isOn: $engine.bothShiftsToggle)
 
             Button {
                 openWindow(id: "settings")
@@ -265,6 +266,12 @@ struct AutoTuneTab: View {
                     isOn: $engine.swapCmdCtrlTab
                 )
                 SettingToggleRow(
+                    title: "Both Shifts → Pause / Resume",
+                    whatItDoes: "Lets you quickly toggle HomeRow on or off for games or VMs.",
+                    howItWorks: "Press Left Shift + Right Shift together anytime to pause or resume remapping.",
+                    isOn: $engine.bothShiftsToggle
+                )
+                SettingToggleRow(
                     title: "Launch at Login",
                     whatItDoes: "Starts HomeRow automatically whenever you log in to your Mac.",
                     howItWorks: "Uses macOS Login Items so you don't have to reopen the app after a restart.",
@@ -302,6 +309,12 @@ struct KeysTab: View {
         (38, "J", "N"), (40, "K", "E"), (37, "L", "I"), (41, ";", "O")
     ]
 
+    private let navRows: [[(code: CGKeyCode, qwerty: String, colemak: String, action: String)]] = [
+        [(32, "U", "L", "Home"), (31, "O", "Y", "End")],
+        [(4, "H", "M", "PgUp"), (38, "J", "N", "←"), (40, "K", "E", "↓"), (37, "L", "I", "↑"), (41, ";", "O", "→")],
+        [(45, "N", "K", "PgDn"), (46, "M", "H", "Back"), (43, ",", ",", "Fwd")],
+    ]
+
     var body: some View {
         Form {
             Section {
@@ -315,53 +328,91 @@ struct KeysTab: View {
                     .frame(width: 200)
                 }
 
-                HStack {
-                    Spacer(minLength: 0)
-                    HStack(alignment: .top, spacing: 8) {
-                        VStack(spacing: 6) {
-                            HStack(spacing: 4) {
-                                ForEach(leftSlots, id: \.code) { item in
-                                    NativeKeycapMenu(
-                                        letter: displayColemak ? item.colemak : item.qwerty,
-                                        mod: engine.keyMods[item.code] ?? .none,
-                                        hasBump: item.code == 3,
-                                        onSelect: { engine.keyMods[item.code] = $0 }
-                                    )
+                VStack(spacing: 10) {
+                    HStack {
+                        Spacer(minLength: 0)
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(spacing: 6) {
+                                HStack(spacing: 4) {
+                                    ForEach(leftSlots, id: \.code) { item in
+                                        NativeKeycapMenu(
+                                            letter: displayColemak ? item.colemak : item.qwerty,
+                                            mod: engine.keyMods[item.code] ?? .none,
+                                            hasBump: item.code == 3,
+                                            isPending: engine.pendingSlots.contains(item.code),
+                                            isPromoted: engine.promotedSlots.contains(item.code),
+                                            isTapped: engine.lastTappedSlot == item.code,
+                                            onSelect: { engine.keyMods[item.code] = $0 }
+                                        )
+                                    }
                                 }
+                                Text("Left Hand")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
-                            Text("Left Hand")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
 
-                        HStack(spacing: 4) {
-                            NativeStaticKeycap(letter: "G")
-                            NativeStaticKeycap(letter: displayColemak ? "M" : "H")
-                        }
-
-                        VStack(spacing: 6) {
                             HStack(spacing: 4) {
-                                ForEach(rightSlots, id: \.code) { item in
-                                    NativeKeycapMenu(
-                                        letter: displayColemak ? item.colemak : item.qwerty,
-                                        mod: engine.keyMods[item.code] ?? .none,
-                                        hasBump: item.code == 38,
-                                        onSelect: { engine.keyMods[item.code] = $0 }
-                                    )
-                                }
+                                NativeStaticKeycap(letter: "G")
+                                NativeStaticKeycap(letter: displayColemak ? "M" : "H")
                             }
-                            Text("Right Hand")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+
+                            VStack(spacing: 6) {
+                                HStack(spacing: 4) {
+                                    ForEach(rightSlots, id: \.code) { item in
+                                        NativeKeycapMenu(
+                                            letter: displayColemak ? item.colemak : item.qwerty,
+                                            mod: engine.keyMods[item.code] ?? .none,
+                                            hasBump: item.code == 38,
+                                            isPending: engine.pendingSlots.contains(item.code),
+                                            isPromoted: engine.promotedSlots.contains(item.code),
+                                            isTapped: engine.lastTappedSlot == item.code,
+                                            onSelect: { engine.keyMods[item.code] = $0 }
+                                        )
+                                    }
+                                }
+                                Text("Right Hand")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
+                    Text(liveFeedbackText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 6)
             } header: {
                 Text("Your Home Row")
             } footer: {
-                Text("Click any key above to choose what happens when you hold it. Tapping always types the letter.")
+                Text("Click any key above to choose what happens when you hold it. Type to see live tap vs. modifier feedback.")
+            }
+
+            Section {
+                VStack(spacing: 6) {
+                    ForEach(Array(navRows.enumerated()), id: \.offset) { _, row in
+                        HStack(spacing: 6) {
+                            ForEach(row, id: \.code) { item in
+                                NativeNavKeycap(
+                                    letter: displayColemak ? item.colemak : item.qwerty,
+                                    action: item.action,
+                                    isLayerActive: engine.isNavLayerActive,
+                                    isPressed: engine.isNavLayerActive && engine.lastNavKey == item.code
+                                )
+                            }
+                        }
+                    }
+                    Text("A / Z / X / C / V → Cmd+A / Z / X / C / V · Any other key → Cmd+<key>")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            } header: {
+                Text("Left Cmd Navigation Layer")
+            } footer: {
+                Text("Hold Left Command to navigate with your right hand. Other shortcuts pass through normally.")
             }
 
             Section("About Home-Row Keys") {
@@ -381,12 +432,32 @@ struct KeysTab: View {
         .formStyle(.grouped)
         .navigationTitle("Home-Row Keys")
     }
+
+    private var liveFeedbackText: String {
+        if !engine.isEnabled { return "HomeRow is paused (press Both Shifts to resume)" }
+        if engine.isNavLayerActive { return "Left Cmd Navigation Layer active" }
+        if !engine.promotedSlots.isEmpty {
+            let mods = engine.promotedSlots.compactMap { engine.keyMods[$0]?.rawValue }
+            return "Holding modifier: " + mods.joined(separator: " + ")
+        }
+        if !engine.pendingSlots.isEmpty { return "Evaluating hold delay…" }
+        if let tapped = engine.lastTappedSlot {
+            let all = leftSlots + rightSlots
+            if let item = all.first(where: { $0.code == tapped }) {
+                return "Tapped letter: \(displayColemak ? item.colemak : item.qwerty)"
+            }
+        }
+        return "Try tapping or holding a home-row key"
+    }
 }
 
 struct NativeKeycapMenu: View {
     let letter: String
     let mod: ModChoice
     let hasBump: Bool
+    let isPending: Bool
+    let isPromoted: Bool
+    let isTapped: Bool
     let onSelect: (ModChoice) -> Void
 
     var body: some View {
@@ -417,13 +488,13 @@ struct NativeKeycapMenu: View {
         VStack(spacing: 3) {
             Text(letter)
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.primary)
+                .foregroundStyle(isPromoted ? Color.white : Color.primary)
             Text(shortSymbol)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(mod == .none ? Color.secondary : Color.accentColor)
+                .foregroundStyle(isPromoted ? Color.white.opacity(0.9) : (mod == .none ? Color.secondary : Color.accentColor))
             if hasBump {
                 Capsule()
-                    .fill(Color.secondary.opacity(0.45))
+                    .fill(isPromoted ? Color.white.opacity(0.7) : Color.secondary.opacity(0.45))
                     .frame(width: 10, height: 2)
             }
         }
@@ -431,13 +502,27 @@ struct NativeKeycapMenu: View {
         .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(mod == .none ? Color(nsColor: .controlBackgroundColor) : Color.accentColor.opacity(0.14))
+                .fill(backgroundColor)
                 .shadow(color: Color.black.opacity(0.06), radius: 1, y: 1)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(mod == .none ? Color(nsColor: .separatorColor) : Color.accentColor.opacity(0.5), lineWidth: 1)
+                .stroke(borderColor, lineWidth: isPromoted || isPending ? 1.5 : 1)
         )
+    }
+
+    private var backgroundColor: Color {
+        if isPromoted { return Color.accentColor }
+        if isPending { return Color.accentColor.opacity(0.28) }
+        if isTapped { return Color.primary.opacity(0.14) }
+        return mod == .none ? Color(nsColor: .controlBackgroundColor) : Color.accentColor.opacity(0.14)
+    }
+
+    private var borderColor: Color {
+        if isPromoted { return Color.accentColor }
+        if isPending { return Color.accentColor.opacity(0.85) }
+        if isTapped { return Color.primary.opacity(0.5) }
+        return mod == .none ? Color(nsColor: .separatorColor) : Color.accentColor.opacity(0.5)
     }
 
     private var shortSymbol: String {
@@ -448,6 +533,33 @@ struct NativeKeycapMenu: View {
         case .command: return "⌘"
         case .shift: return "⇧"
         }
+    }
+}
+
+struct NativeNavKeycap: View {
+    let letter: String
+    let action: String
+    let isLayerActive: Bool
+    let isPressed: Bool
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(letter)
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(isPressed ? Color.white : Color.primary)
+            Text(action)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(isPressed ? Color.white.opacity(0.9) : Color.accentColor)
+        }
+        .frame(width: 48, height: 46)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isPressed ? Color.accentColor : (isLayerActive ? Color.accentColor.opacity(0.18) : Color(nsColor: .controlBackgroundColor)))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isPressed ? Color.accentColor : (isLayerActive ? Color.accentColor.opacity(0.55) : Color(nsColor: .separatorColor)), lineWidth: 1)
+        )
     }
 }
 
@@ -482,6 +594,12 @@ struct TimingTab: View {
                     whatItDoes: "Prevents same-hand typing rolls from triggering accidental shortcuts.",
                     howItWorks: "A left-hand home-row key only becomes a modifier when you press a right-hand key (and vice versa).",
                     isOn: $engine.oppositeHandOnly
+                )
+                SettingToggleRow(
+                    title: "Pinky & Ring Forgiveness (+30 ms)",
+                    whatItDoes: "Adds extra hold delay to pinky and ring fingers so outer-finger rolls don't misfire.",
+                    howItWorks: "Gives A, S/R, L/I, and ;/O 30 ms of extra time before switching from a letter to a modifier.",
+                    isOn: $engine.pinkyRingGrace
                 )
             }
 
