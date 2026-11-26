@@ -114,14 +114,21 @@ final class HomeRowEngine: ObservableObject {
     private var willTerminateObserver: NSObjectProtocol?
 
     private let leftHandKeys: Set<CGKeyCode> = [
+        10, 18, 19, 20, 21, 23,
         12, 13, 14, 15, 17,
         0, 1, 2, 3, 5,
         50, 6, 7, 8, 9, 11
     ]
     private let rightHandKeys: Set<CGKeyCode> = [
+        22, 26, 28, 25, 29, 27, 24,
         16, 32, 34, 31, 35, 33, 30,
         4, 38, 40, 37, 41, 39, 42,
         45, 46, 43, 47, 44
+    ]
+    private let neutralKeys: Set<CGKeyCode> = [
+        49, 36, 76, 48, 53, 51, 117,
+        115, 119, 116, 121,
+        123, 124, 125, 126
     ]
 
     private let navMap: [CGKeyCode: (key: CGKeyCode, mods: CGEventFlags)] = [
@@ -149,12 +156,12 @@ final class HomeRowEngine: ObservableObject {
         let isLeft: Bool
         var withinPriorIdle: Bool = false
         var promotedToMod: Bool = false
-        var bufferedDowns: [(keyCode: CGKeyCode, flags: CGEventFlags)] = []
         var timer: DispatchWorkItem? = nil
     }
 
     private var pending: [CGKeyCode: PendingKey] = [:]
     private var activeMods: CGEventFlags = []
+    private var bufferedKeys: [(keyCode: CGKeyCode, flags: CGEventFlags)] = []
     private var synthesizedDownKeys: Set<CGKeyCode> = []
     private var lastNonModKeyTime: CFAbsoluteTime = 0
     private var lastTapReleaseTime: [CGKeyCode: CFAbsoluteTime] = [:]
@@ -216,8 +223,39 @@ final class HomeRowEngine: ObservableObject {
         }
         pending.removeAll()
         activeMods = []
+        bufferedKeys.removeAll()
         synthesizedDownKeys.removeAll()
         leftCmdDown = false
+    }
+
+    private func canModify(_ targetKey: CGKeyCode, with modIsLeft: Bool) -> Bool {
+        if !oppositeHandOnly { return true }
+        if neutralKeys.contains(targetKey) { return true }
+        return modIsLeft ? rightHandKeys.contains(targetKey) : leftHandKeys.contains(targetKey)
+    }
+
+    private func recomputeActiveMods() {
+        var flags: CGEventFlags = []
+        for p in pending.values where p.promotedToMod {
+            flags.insert(p.flag)
+        }
+        activeMods = flags
+    }
+
+    private func applyTabSwapIfNeeded(keyCode: CGKeyCode, flags: CGEventFlags) -> CGEventFlags {
+        guard swapCmdCtrlTab && keyCode == 48 else { return flags }
+        let hasCmd = flags.contains(.maskCommand)
+        let hasCtrl = flags.contains(.maskControl)
+        guard hasCmd != hasCtrl else { return flags }
+        var result = flags
+        if hasCmd {
+            result.remove(.maskCommand)
+            result.insert(.maskControl)
+        } else {
+            result.remove(.maskControl)
+            result.insert(.maskCommand)
+        }
+        return result
     }
 
     private func syncCapsLockMapping() {
@@ -399,35 +437,54 @@ final class HomeRowEngine: ObservableObject {
         guard let src = CGEventSource(stateID: .privateState),
               let ev = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: down) else { return }
         ev.setIntegerValueField(.eventSourceUserData, value: syntheticTag)
-        ev.flags = flags
+        ev.flags = applyTabSwapIfNeeded(keyCode: keyCode, flags: flags)
         ev.post(tap: .cgSessionEventTap)
     }
 
-    private func flushPendingAsTap(_ pKey: CGKeyCode, now: CFAbsoluteTime) {
-        guard let p = pending.removeValue(forKey: pKey) else { return }
-        p.timer?.cancel()
-        lastTapReleaseTime[pKey] = now
-        lastNonModKeyTime = now
-        emitKey(pKey, down: true, flags: activeMods)
-        emitKey(pKey, down: false, flags: activeMods)
-        for buf in p.bufferedDowns {
+    private func flushPendingKeysAsTaps(_ keys: [CGKeyCode], now: CFAbsoluteTime, alsoFlushBuffered: Bool) {
+        let sortedKeys = keys
+            .compactMap { pending[$0] }
+            .sorted { $0.downTime < $1.downTime }
+            .map(\.keyCode)
+        for pKey in sortedKeys {
+            guard let p = pending.removeValue(forKey: pKey) else { continue }
+            p.timer?.cancel()
+            lastTapReleaseTime[pKey] = now
             lastNonModKeyTime = now
-            synthesizedDownKeys.insert(buf.keyCode)
-            emitKey(buf.keyCode, down: true, flags: buf.flags.union(activeMods))
+            emitKey(pKey, down: true, flags: activeMods)
+            emitKey(pKey, down: false, flags: activeMods)
+        }
+        if alsoFlushBuffered && !bufferedKeys.isEmpty {
+            let bufs = bufferedKeys
+            bufferedKeys.removeAll()
+            for buf in bufs {
+                lastNonModKeyTime = now
+                synthesizedDownKeys.insert(buf.keyCode)
+                emitKey(buf.keyCode, down: true, flags: buf.flags.union(activeMods))
+            }
         }
     }
 
-    private func promotePendingToMod(_ pKey: CGKeyCode) {
-        guard var p = pending[pKey], !p.promotedToMod else { return }
-        p.timer?.cancel()
-        p.promotedToMod = true
-        let bufs = p.bufferedDowns
-        p.bufferedDowns.removeAll()
-        pending[pKey] = p
-        activeMods.insert(p.flag)
-        for buf in bufs {
-            synthesizedDownKeys.insert(buf.keyCode)
-            emitKey(buf.keyCode, down: true, flags: buf.flags.union(activeMods))
+    private func promotePendingKeys(_ keys: [CGKeyCode], flushBuffered: Bool) {
+        var changed = false
+        for pKey in keys {
+            guard var p = pending[pKey], !p.promotedToMod else { continue }
+            p.timer?.cancel()
+            p.timer = nil
+            p.promotedToMod = true
+            pending[pKey] = p
+            changed = true
+        }
+        if changed {
+            recomputeActiveMods()
+        }
+        if flushBuffered && !bufferedKeys.isEmpty {
+            let bufs = bufferedKeys
+            bufferedKeys.removeAll()
+            for buf in bufs {
+                synthesizedDownKeys.insert(buf.keyCode)
+                emitKey(buf.keyCode, down: true, flags: buf.flags.union(activeMods))
+            }
         }
     }
 
@@ -471,24 +528,10 @@ final class HomeRowEngine: ObservableObject {
             }
         }
 
-        if swapCmdCtrlTab && keyCode == 48 && (type == .keyDown || type == .keyUp) {
-            var flags = event.flags.union(activeMods)
-            let hasCmd = flags.contains(.maskCommand)
-            let hasCtrl = flags.contains(.maskControl)
-            if hasCmd != hasCtrl {
-                if hasCmd {
-                    flags.remove(.maskCommand)
-                    flags.insert(.maskControl)
-                } else {
-                    flags.remove(.maskControl)
-                    flags.insert(.maskCommand)
-                }
-                event.flags = flags
-                return Unmanaged.passUnretained(event)
-            }
-        }
-
         guard homeRowModsEnabled, (type == .keyDown || type == .keyUp) else {
+            if type == .keyDown || type == .keyUp {
+                event.flags = applyTabSwapIfNeeded(keyCode: keyCode, flags: event.flags.union(activeMods))
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -497,20 +540,20 @@ final class HomeRowEngine: ObservableObject {
         let quickTapSec = quickTapMs / 1000.0
 
         if type == .keyUp && pending[keyCode] == nil {
-            for (pKey, pVal) in pending where !pVal.promotedToMod {
-                if pVal.bufferedDowns.contains(where: { $0.keyCode == keyCode }) {
-                    if !pVal.withinPriorIdle || (now - pVal.downTime >= tappingSec) {
-                        promotePendingToMod(pKey)
-                    } else {
-                        flushPendingAsTap(pKey, now: now)
-                    }
+            if bufferedKeys.contains(where: { $0.keyCode == keyCode }) {
+                let eligible = pending.values.filter { !$0.promotedToMod && canModify(keyCode, with: $0.isLeft) }
+                if !eligible.isEmpty && eligible.contains(where: { !$0.withinPriorIdle || (now - $0.downTime >= tappingSec) }) {
+                    promotePendingKeys(eligible.map(\.keyCode), flushBuffered: true)
+                } else {
+                    let allUnpromoted = pending.values.filter { !$0.promotedToMod }.map(\.keyCode)
+                    flushPendingKeysAsTaps(allUnpromoted, now: now, alsoFlushBuffered: true)
                 }
             }
             if synthesizedDownKeys.remove(keyCode) != nil {
                 emitKey(keyCode, down: false, flags: event.flags.union(activeMods))
                 return nil
             }
-            event.flags = event.flags.union(activeMods)
+            event.flags = applyTabSwapIfNeeded(keyCode: keyCode, flags: event.flags.union(activeMods))
             return Unmanaged.passUnretained(event)
         }
 
@@ -518,27 +561,40 @@ final class HomeRowEngine: ObservableObject {
            let modFlag = keyMods[keyCode]?.flag {
             if type == .keyDown {
                 if isRepeat {
-                    if pending[keyCode] != nil || synthesizedDownKeys.contains(keyCode) { return nil }
+                    if pending[keyCode] != nil || synthesizedDownKeys.contains(keyCode) || bufferedKeys.contains(where: { $0.keyCode == keyCode }) {
+                        return nil
+                    }
                     event.flags = event.flags.union(activeMods)
                     return Unmanaged.passUnretained(event)
                 }
 
-                var wasBuffered = false
-                for (pKey, var pVal) in pending where pKey != keyCode && !pVal.promotedToMod {
-                    let opposite = pVal.isLeft ? rightHandKeys.contains(keyCode) : leftHandKeys.contains(keyCode)
-                    if opposite || !oppositeHandOnly {
-                        if now - pVal.downTime >= tappingSec {
-                            promotePendingToMod(pKey)
-                        } else {
-                            pVal.bufferedDowns.append((keyCode: keyCode, flags: event.flags))
-                            pending[pKey] = pVal
-                            wasBuffered = true
-                        }
+                let promoted = pending.values.filter { $0.promotedToMod }
+                if !promoted.isEmpty && promoted.allSatisfy({ $0.isLeft == slot.isLeft }) {
+                    pending[keyCode] = PendingKey(
+                        keyCode: keyCode,
+                        downTime: now,
+                        flag: modFlag,
+                        isLeft: slot.isLeft,
+                        withinPriorIdle: false,
+                        promotedToMod: true,
+                        timer: nil
+                    )
+                    recomputeActiveMods()
+                    return nil
+                }
+
+                let oppositeUnpromoted = pending.values.filter { !$0.promotedToMod && $0.keyCode != keyCode && canModify(keyCode, with: $0.isLeft) }
+                if !oppositeUnpromoted.isEmpty {
+                    if oppositeUnpromoted.contains(where: { now - $0.downTime >= tappingSec }) {
+                        promotePendingKeys(oppositeUnpromoted.map(\.keyCode), flushBuffered: true)
+                        synthesizedDownKeys.insert(keyCode)
+                        emitKey(keyCode, down: true, flags: event.flags.union(activeMods))
+                        return nil
                     } else {
-                        flushPendingAsTap(pKey, now: now)
+                        bufferedKeys.append((keyCode: keyCode, flags: event.flags))
+                        return nil
                     }
                 }
-                if wasBuffered { return nil }
 
                 if !activeMods.isEmpty {
                     synthesizedDownKeys.insert(keyCode)
@@ -550,8 +606,9 @@ final class HomeRowEngine: ObservableObject {
                     return Unmanaged.passUnretained(event)
                 }
 
+                let sameHandUnpromoted = pending.values.filter { !$0.promotedToMod && $0.isLeft == slot.isLeft }
                 let sinceSame = now - (lastTapReleaseTime[keyCode] ?? 0)
-                if sinceSame < quickTapSec {
+                if sameHandUnpromoted.isEmpty && sinceSame < quickTapSec {
                     lastNonModKeyTime = now
                     event.flags = event.flags.union(activeMods)
                     return Unmanaged.passUnretained(event)
@@ -567,8 +624,17 @@ final class HomeRowEngine: ObservableObject {
                 )
                 let work = DispatchWorkItem { [weak self] in
                     guard let self, var cur = self.pending[keyCode], !cur.promotedToMod else { return }
-                    if !self.oppositeHandOnly || !cur.bufferedDowns.isEmpty {
-                        self.promotePendingToMod(keyCode)
+                    if let firstBuf = self.bufferedKeys.first {
+                        let toPromote = self.pending.values
+                            .filter { !$0.promotedToMod && self.canModify(firstBuf.keyCode, with: $0.isLeft) }
+                            .map(\.keyCode)
+                        if !toPromote.isEmpty {
+                            self.promotePendingKeys(toPromote, flushBuffered: true)
+                            return
+                        }
+                    }
+                    if !self.oppositeHandOnly {
+                        self.promotePendingKeys([keyCode], flushBuffered: true)
                     } else {
                         cur.withinPriorIdle = false
                         self.pending[keyCode] = cur
@@ -583,13 +649,24 @@ final class HomeRowEngine: ObservableObject {
                     p.timer?.cancel()
                     if p.promotedToMod {
                         pending.removeValue(forKey: keyCode)
-                        activeMods.remove(p.flag)
-                    } else if !p.bufferedDowns.isEmpty && (now - p.downTime >= tappingSec) {
-                        promotePendingToMod(keyCode)
+                        recomputeActiveMods()
+                    } else if let firstBuf = bufferedKeys.first,
+                              (now - p.downTime >= tappingSec),
+                              canModify(firstBuf.keyCode, with: p.isLeft) {
+                        let toPromote = pending.values
+                            .filter { !$0.promotedToMod && canModify(firstBuf.keyCode, with: $0.isLeft) }
+                            .map(\.keyCode)
+                        promotePendingKeys(toPromote, flushBuffered: true)
                         pending.removeValue(forKey: keyCode)
-                        activeMods.remove(p.flag)
+                        recomputeActiveMods()
+                    } else if (now - p.downTime >= tappingSec) && bufferedKeys.isEmpty {
+                        pending.removeValue(forKey: keyCode)
                     } else {
-                        flushPendingAsTap(keyCode, now: now)
+                        let toFlush = pending.values
+                            .filter { !$0.promotedToMod && $0.isLeft == p.isLeft && $0.downTime <= p.downTime }
+                            .map(\.keyCode)
+                        let remainingUnpromoted = pending.values.filter { !$0.promotedToMod && !toFlush.contains($0.keyCode) }
+                        flushPendingKeysAsTaps(toFlush, now: now, alsoFlushBuffered: remainingUnpromoted.isEmpty)
                     }
                     return nil
                 }
@@ -597,31 +674,47 @@ final class HomeRowEngine: ObservableObject {
                     emitKey(keyCode, down: false, flags: event.flags.union(activeMods))
                     return nil
                 }
-                event.flags = event.flags.union(activeMods)
+                event.flags = applyTabSwapIfNeeded(keyCode: keyCode, flags: event.flags.union(activeMods))
                 return Unmanaged.passUnretained(event)
             }
         }
 
         if type == .keyDown && !isRepeat {
             lastNonModKeyTime = now
-            var wasBuffered = false
-            var flushedBeforeKey = false
-            for (pKey, var pVal) in pending where !pVal.promotedToMod {
-                let opposite = pVal.isLeft ? rightHandKeys.contains(keyCode) : leftHandKeys.contains(keyCode)
-                if (opposite || !oppositeHandOnly) && keyCode != 51 {
-                    if now - pVal.downTime >= tappingSec {
-                        promotePendingToMod(pKey)
+            var eligible: [CGKeyCode] = []
+            var ineligible: [CGKeyCode] = []
+            for pVal in pending.values where !pVal.promotedToMod {
+                if keyCode == 51 {
+                    if (now - pVal.downTime >= tappingSec) || !pVal.withinPriorIdle {
+                        eligible.append(pVal.keyCode)
                     } else {
-                        pVal.bufferedDowns.append((keyCode: keyCode, flags: event.flags))
-                        pending[pKey] = pVal
-                        wasBuffered = true
+                        ineligible.append(pVal.keyCode)
                     }
+                } else if canModify(keyCode, with: pVal.isLeft) {
+                    eligible.append(pVal.keyCode)
                 } else {
-                    flushPendingAsTap(pKey, now: now)
-                    flushedBeforeKey = true
+                    ineligible.append(pVal.keyCode)
                 }
             }
-            if wasBuffered { return nil }
+
+            var flushedBeforeKey = false
+            if !ineligible.isEmpty {
+                flushPendingKeysAsTaps(ineligible, now: now, alsoFlushBuffered: false)
+                flushedBeforeKey = true
+            }
+
+            if !eligible.isEmpty {
+                if eligible.contains(where: {
+                    guard let p = pending[$0] else { return false }
+                    return now - p.downTime >= tappingSec
+                }) {
+                    promotePendingKeys(eligible, flushBuffered: true)
+                } else {
+                    bufferedKeys.append((keyCode: keyCode, flags: event.flags))
+                    return nil
+                }
+            }
+
             if flushedBeforeKey || !activeMods.isEmpty {
                 synthesizedDownKeys.insert(keyCode)
                 emitKey(keyCode, down: true, flags: event.flags.union(activeMods))
@@ -629,9 +722,7 @@ final class HomeRowEngine: ObservableObject {
             }
         }
 
-        if !activeMods.isEmpty {
-            event.flags = event.flags.union(activeMods)
-        }
+        event.flags = applyTabSwapIfNeeded(keyCode: keyCode, flags: event.flags.union(activeMods))
         return Unmanaged.passUnretained(event)
     }
 }
