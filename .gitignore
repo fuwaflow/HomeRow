@@ -1,2 +1,9 @@
 HomeRow.app/
 .DS_Store
+linux/homerow-daemon
+linux/libhomerow.so
+linux/window.ui
+*.o
+*.so
+__pycache__/
+*.pyc
